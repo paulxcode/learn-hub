@@ -4,7 +4,7 @@ An interactive data engineering learning platform — **8 skill trees, 120 lesso
 
 ## Tech Stack
 
-**Backend:** Express.js (ESM), sql.js (SQLite WASM), express-session  
+**Backend:** Express.js (ESM), PostgreSQL (Supabase), express-session + connect-pg-simple  
 **Frontend:** Vanilla JS SPA — no framework, no bundler, no build step  
 **Python Runner:** Pyodide 0.25.0 (numpy, pandas, matplotlib pre-loaded)  
 **Auth:** Session-based (crypto.scryptSync password hashing)  
@@ -28,8 +28,8 @@ An interactive data engineering learning platform — **8 skill trees, 120 lesso
 - **Interactive Python Runner** — Click *Run* on any Python code block; Pyodide executes in the browser and captures stdout + matplotlib figures
 - **Quizzes** — Multiple-choice with instant feedback; coding exercises verified against expected output
 - **Progress Tracking** — Mark lessons complete, save notes, bookmark favorites, track streaks, view per-skill progress bars on the dashboard
-- **Themed UI** — Cyberpunk-inspired design with a custom YouTube music player per user
-- **Session Auth** — Register/login with username + email; profile settings to change password or set a custom music URL
+- **Theme System** — 5 game-inspired themes (Cyberpunk, Dark Souls, Witcher, League, Detroit) with per-user YouTube music player
+- **Session Auth** — Register/login with username + email; profile settings to change password, set a custom music URL, or pick a theme
 - **Real-time Search** — Filter lessons across all skills instantly
 
 ## Quick Start
@@ -37,20 +37,31 @@ An interactive data engineering learning platform — **8 skill trees, 120 lesso
 ```bash
 # Requires Node.js 18+
 npm install
+
+# Set your Supabase connection string
+$env:DATABASE_URL = "postgresql://postgres:password@db.your-project.supabase.co:5432/postgres"
+
 npm run dev
 ```
 
-Opens at `http://localhost:3000`. The `learning.db` file is created automatically on first run.
+Opens at `http://localhost:3000`. The schema is created automatically on first run.
 
 - `npm run dev` — dev mode with `node --watch` (auto-restart on file changes)
 - `npm start` — production start
+
+## Deploy on Vercel
+
+1. Push to GitHub
+2. Import repo into Vercel
+3. Set `DATABASE_URL` environment variable to your Supabase connection string
+4. Deploy — the included `vercel.json` handles routing
 
 ## Project Structure
 
 ```
 content/                  # 8 skill dirs, 15 markdown lessons each
 database/
-  db.js                   # sql.js wrapper (load/save binary DB)
+  db.js                   # PostgreSQL pool (pg) + schema migrations
   schema.sql              # Users + lessons + progress tables
 routes/
   auth.js                 # Register, login, logout, settings
@@ -63,13 +74,14 @@ public/
   css/style.css           # All styles, 5 themes
   config/themes.json      # Theme→YouTube video mappings
 server.js                 # Express entry point
+vercel.json               # Vercel deployment config
 ```
 
 ## Architecture Notes
 
-- **sql.js** is SQLite compiled to WebAssembly — the binary `learning.db` file is loaded into memory on startup and saved to disk on every write
-- **Sessions** are stored in-memory (MemoryStore) — a server restart logs all users out
-- **Content re-indexes on restart** — `DELETE` + re-`INSERT` all lessons from the `content/` directory
+- **PostgreSQL** via Supabase — sessions and data persist across serverless cold starts
+- **Sessions** stored in the database via connect-pg-simple (not in-memory)
+- **Content re-indexes on restart** — DELETE + re-INSERT all lessons from the `content/` directory
 - **No build step** — the frontend is vanilla JS served as static files
 
 ## License
