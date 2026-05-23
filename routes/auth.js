@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
-import { getDb, saveDb } from '../database/db.js';
+import { pool } from '../database/db.js';
 
 export const authRouter = Router();
 
@@ -24,7 +24,7 @@ function requireAuth(req, res, next) {
   next();
 }
 
-authRouter.post('/register', (req, res) => {
+authRouter.post('/register', async (req, res) => {
   const { username, email, password } = req.body;
   if (!username || !email || !password) {
     return res.status(400).json({ error: 'username, email, password required' });
@@ -39,42 +39,47 @@ authRouter.post('/register', (req, res) => {
     return res.status(400).json({ error: 'Password must be at least 6 characters' });
   }
 
-  const db = getDb();
-  const existing = db.exec('SELECT id FROM users WHERE email = ? OR username = ?', [email, username]);
-  if (existing.length > 0 && existing[0].values.length > 0) {
-    return res.status(409).json({ error: 'Username or email already taken' });
+  try {
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1 OR username = $2', [email, username]);
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ error: 'Username or email already taken' });
+    }
+
+    const hash = hashPassword(password);
+    await pool.query('INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3)', [username, email, hash]);
+
+    const userResult = await pool.query('SELECT id, username, email, music_url, theme FROM users WHERE email = $1', [email]);
+    const user = userResult.rows[0];
+    req.session.userId = user.id;
+
+    res.json({ user: { id: user.id, username: user.username, email: user.email, music_url: user.music_url || '', theme: user.theme || 'cyberpunk' } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  const hash = hashPassword(password);
-  db.run('INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)', [username, email, hash]);
-  saveDb();
-
-  const userResult = db.exec('SELECT id, username, email, music_url, theme FROM users WHERE email = ?', [email]);
-  const user = userResult[0].values[0];
-  req.session.userId = user[0];
-
-  res.json({ user: { id: user[0], username: user[1], email: user[2], music_url: user[3] || '', theme: user[4] || 'cyberpunk' } });
 });
 
-authRouter.post('/login', (req, res) => {
+authRouter.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password required' });
   }
 
-  const db = getDb();
-  const result = db.exec('SELECT id, username, email, password_hash, music_url FROM users WHERE email = ?', [email]);
-  if (result.length === 0 || result[0].values.length === 0) {
-    return res.status(401).json({ error: 'Invalid email or password' });
-  }
+  try {
+    const result = await pool.query('SELECT id, username, email, password_hash, music_url, theme FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
 
-  const [id, username, userEmail, hash, musicUrl, theme] = result[0].values[0];
-  if (!verifyPassword(password, hash)) {
-    return res.status(401).json({ error: 'Invalid email or password' });
-  }
+    const user = result.rows[0];
+    if (!verifyPassword(password, user.password_hash)) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
 
-  req.session.userId = id;
-  res.json({ user: { id, username, email: userEmail, music_url: musicUrl || '', theme: theme || 'cyberpunk' } });
+    req.session.userId = user.id;
+    res.json({ user: { id: user.id, username: user.username, email: user.email, music_url: user.music_url || '', theme: user.theme || 'cyberpunk' } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 authRouter.post('/logout', (req, res) => {
@@ -83,53 +88,57 @@ authRouter.post('/logout', (req, res) => {
   });
 });
 
-authRouter.get('/me', (req, res) => {
+authRouter.get('/me', async (req, res) => {
   if (!req.session.userId) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
-  const db = getDb();
-  const result = db.exec('SELECT id, username, email, music_url, theme FROM users WHERE id = ?', [req.session.userId]);
-  if (result.length === 0 || result[0].values.length === 0) {
-    return res.status(401).json({ error: 'User not found' });
+  try {
+    const result = await pool.query('SELECT id, username, email, music_url, theme FROM users WHERE id = $1', [req.session.userId]);
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    const user = result.rows[0];
+    res.json({ user: { id: user.id, username: user.username, email: user.email, music_url: user.music_url || '', theme: user.theme || 'cyberpunk' } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  const [id, username, email, musicUrl, theme] = result[0].values[0];
-  res.json({ user: { id, username, email, music_url: musicUrl || '', theme: theme || 'cyberpunk' } });
 });
 
-authRouter.put('/settings', requireAuth, (req, res) => {
+authRouter.put('/settings', requireAuth, async (req, res) => {
   const { username, password, music_url, theme } = req.body;
-  const db = getDb();
 
-  if (username) {
-    if (username.length < 3 || username.length > 30) {
-      return res.status(400).json({ error: 'Username must be 3-30 characters' });
+  try {
+    if (username) {
+      if (username.length < 3 || username.length > 30) {
+        return res.status(400).json({ error: 'Username must be 3-30 characters' });
+      }
+      const existing = await pool.query('SELECT id FROM users WHERE username = $1 AND id != $2', [username, req.session.userId]);
+      if (existing.rows.length > 0) {
+        return res.status(409).json({ error: 'Username already taken' });
+      }
+      await pool.query('UPDATE users SET username = $1 WHERE id = $2', [username, req.session.userId]);
     }
-    const existing = db.exec('SELECT id FROM users WHERE username = ? AND id != ?', [username, req.session.userId]);
-    if (existing.length > 0 && existing[0].values.length > 0) {
-      return res.status(409).json({ error: 'Username already taken' });
+
+    if (password) {
+      if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters' });
+      }
+      const hash = hashPassword(password);
+      await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.session.userId]);
     }
-    db.run('UPDATE users SET username = ? WHERE id = ?', [username, req.session.userId]);
-  }
 
-  if (password) {
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (music_url !== undefined) {
+      await pool.query('UPDATE users SET music_url = $1 WHERE id = $2', [music_url, req.session.userId]);
     }
-    const hash = hashPassword(password);
-    db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, req.session.userId]);
+
+    if (theme !== undefined) {
+      await pool.query('UPDATE users SET theme = $1 WHERE id = $2', [theme, req.session.userId]);
+    }
+
+    const result = await pool.query('SELECT id, username, email, music_url, theme FROM users WHERE id = $1', [req.session.userId]);
+    const user = result.rows[0];
+    res.json({ user: { id: user.id, username: user.username, email: user.email, music_url: user.music_url || '', theme: user.theme || 'cyberpunk' } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  if (music_url !== undefined) {
-    db.run('UPDATE users SET music_url = ? WHERE id = ?', [music_url, req.session.userId]);
-  }
-
-  if (theme !== undefined) {
-    db.run('UPDATE users SET theme = ? WHERE id = ?', [theme, req.session.userId]);
-  }
-
-  saveDb();
-
-  const result = db.exec('SELECT id, username, email, music_url, theme FROM users WHERE id = ?', [req.session.userId]);
-  const [id, uname, email, musicUrl, userTheme] = result[0].values[0];
-  res.json({ user: { id, username: uname, email, music_url: musicUrl || '', theme: userTheme || 'cyberpunk' } });
 });

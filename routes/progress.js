@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, saveDb } from '../database/db.js';
+import { pool } from '../database/db.js';
 
 export const progressRouter = Router();
 
@@ -12,127 +12,106 @@ function requireAuth(req, res, next) {
 
 progressRouter.use(requireAuth);
 
-progressRouter.get('/', (req, res) => {
-  const db = getDb();
-  const completed = db.exec('SELECT * FROM progress WHERE user_id = ?', [req.session.userId]);
-  const bookmarks = db.exec('SELECT * FROM bookmarks WHERE user_id = ?', [req.session.userId]);
+progressRouter.get('/', async (req, res) => {
+  const completedResult = await pool.query('SELECT * FROM progress WHERE user_id = $1', [req.session.userId]);
+  const bookmarksResult = await pool.query('SELECT * FROM bookmarks WHERE user_id = $1', [req.session.userId]);
   res.json({
-    completed: completed.length > 0 ? completed[0].values.map(r => ({
-      lesson_id: r[0], completed_at: r[1], notes: r[2]
-    })) : [],
-    bookmarks: bookmarks.length > 0 ? bookmarks[0].values.map(r => ({
-      lesson_id: r[0], label: r[1]
-    })) : [],
+    completed: completedResult.rows.map(r => ({
+      lesson_id: r.lesson_id, completed_at: r.completed_at, notes: r.notes
+    })),
+    bookmarks: bookmarksResult.rows.map(r => ({
+      lesson_id: r.lesson_id, label: r.label
+    })),
   });
 });
 
-progressRouter.post('/complete', (req, res) => {
+progressRouter.post('/complete', async (req, res) => {
   const { lessonId } = req.body;
   if (!lessonId) return res.status(400).json({ error: 'lessonId required' });
-  const db = getDb();
-  const existing = db.exec('SELECT notes FROM progress WHERE lesson_id = ? AND user_id = ?', [lessonId, req.session.userId]);
-  const notes = (existing.length > 0 && existing[0].values.length > 0) ? existing[0].values[0][0] : '';
-  db.run(
-    'INSERT OR REPLACE INTO progress (lesson_id, user_id, completed_at, notes) VALUES (?, ?, datetime(\'now\'), ?)',
+  const existing = await pool.query('SELECT notes FROM progress WHERE lesson_id = $1 AND user_id = $2', [lessonId, req.session.userId]);
+  const notes = existing.rows.length > 0 ? existing.rows[0].notes : '';
+  await pool.query(
+    `INSERT INTO progress (lesson_id, user_id, completed_at, notes) VALUES ($1, $2, NOW(), $3) ON CONFLICT (lesson_id, user_id) DO UPDATE SET completed_at = NOW(), notes = EXCLUDED.notes`,
     [lessonId, req.session.userId, notes || '']
   );
-  saveDb();
   res.json({ ok: true });
 });
 
-progressRouter.delete('/complete/:lessonId', (req, res) => {
-  const db = getDb();
-  db.run('DELETE FROM progress WHERE lesson_id = ? AND user_id = ?', [req.params.lessonId, req.session.userId]);
-  saveDb();
+progressRouter.delete('/complete/:lessonId', async (req, res) => {
+  await pool.query('DELETE FROM progress WHERE lesson_id = $1 AND user_id = $2', [req.params.lessonId, req.session.userId]);
   res.json({ ok: true });
 });
 
-progressRouter.put('/notes', (req, res) => {
+progressRouter.put('/notes', async (req, res) => {
   const { lessonId, notes } = req.body;
   if (!lessonId) return res.status(400).json({ error: 'lessonId required' });
-  const db = getDb();
-  const existing = db.exec('SELECT completed_at FROM progress WHERE lesson_id = ? AND user_id = ?', [lessonId, req.session.userId]);
-  if (existing.length > 0 && existing[0].values.length > 0) {
-    db.run('UPDATE progress SET notes = ? WHERE lesson_id = ? AND user_id = ?', [notes || '', lessonId, req.session.userId]);
+  const existing = await pool.query('SELECT completed_at FROM progress WHERE lesson_id = $1 AND user_id = $2', [lessonId, req.session.userId]);
+  if (existing.rows.length > 0) {
+    await pool.query('UPDATE progress SET notes = $1 WHERE lesson_id = $2 AND user_id = $3', [notes || '', lessonId, req.session.userId]);
   } else {
-    db.run('INSERT INTO progress (lesson_id, user_id, notes, completed_at) VALUES (?, ?, ?, NULL)', [lessonId, req.session.userId, notes || '']);
+    await pool.query('INSERT INTO progress (lesson_id, user_id, notes, completed_at) VALUES ($1, $2, $3, NULL)', [lessonId, req.session.userId, notes || '']);
   }
-  saveDb();
   res.json({ ok: true });
 });
 
-progressRouter.post('/bookmark', (req, res) => {
+progressRouter.post('/bookmark', async (req, res) => {
   const { lessonId, label } = req.body;
   if (!lessonId || !label) return res.status(400).json({ error: 'lessonId and label required' });
-  const db = getDb();
-  db.run('INSERT OR IGNORE INTO bookmarks (lesson_id, user_id, label) VALUES (?, ?, ?)', [lessonId, req.session.userId, label]);
-  saveDb();
+  await pool.query('INSERT INTO bookmarks (lesson_id, user_id, label) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [lessonId, req.session.userId, label]);
   res.json({ ok: true });
 });
 
-progressRouter.delete('/bookmark/:lessonId/:label', (req, res) => {
-  const db = getDb();
-  db.run('DELETE FROM bookmarks WHERE lesson_id = ? AND user_id = ? AND label = ?', [req.params.lessonId, req.session.userId, req.params.label]);
-  saveDb();
+progressRouter.delete('/bookmark/:lessonId/:label', async (req, res) => {
+  await pool.query('DELETE FROM bookmarks WHERE lesson_id = $1 AND user_id = $2 AND label = $3', [req.params.lessonId, req.session.userId, req.params.label]);
   res.json({ ok: true });
 });
 
-progressRouter.post('/quiz-result', (req, res) => {
+progressRouter.post('/quiz-result', async (req, res) => {
   const { lessonId, score, total, answers } = req.body;
   if (!lessonId || score === undefined || total === undefined) {
     return res.status(400).json({ error: 'lessonId, score, total required' });
   }
-  const db = getDb();
-  db.run(
-    'INSERT OR REPLACE INTO quiz_results (lesson_id, user_id, score, total, answers, completed_at) VALUES (?, ?, ?, ?, ?, datetime(\'now\'))',
+  await pool.query(
+    `INSERT INTO quiz_results (lesson_id, user_id, score, total, answers, completed_at) VALUES ($1, $2, $3, $4, $5, NOW()) ON CONFLICT (lesson_id, user_id) DO UPDATE SET score = EXCLUDED.score, total = EXCLUDED.total, answers = EXCLUDED.answers, completed_at = NOW()`,
     [lessonId, req.session.userId, score, total, answers || '']
   );
-  saveDb();
   res.json({ ok: true });
 });
 
-progressRouter.get('/dashboard', (req, res) => {
-  const db = getDb();
-
-  const totalsResult = db.exec('SELECT skill, COUNT(*) as cnt FROM lessons GROUP BY skill ORDER BY skill');
+progressRouter.get('/dashboard', async (req, res) => {
+  const totalsResult = await pool.query('SELECT skill, COUNT(*)::int as cnt FROM lessons GROUP BY skill ORDER BY skill');
   const totals = {};
-  if (totalsResult.length > 0) {
-    for (const row of totalsResult[0].values) {
-      totals[row[0]] = row[1];
-    }
+  for (const row of totalsResult.rows) {
+    totals[row.skill] = row.cnt;
   }
 
-  const completedResult = db.exec(`
-    SELECT l.skill, COUNT(*) as cnt
+  const completedResult = await pool.query(`
+    SELECT l.skill, COUNT(*)::int as cnt
     FROM progress p JOIN lessons l ON p.lesson_id = l.id
-    WHERE p.completed_at IS NOT NULL AND p.user_id = ?
+    WHERE p.completed_at IS NOT NULL AND p.user_id = $1
     GROUP BY l.skill
   `, [req.session.userId]);
   const completed = {};
-  if (completedResult.length > 0) {
-    for (const row of completedResult[0].values) {
-      completed[row[0]] = row[1];
-    }
+  for (const row of completedResult.rows) {
+    completed[row.skill] = row.cnt;
   }
 
-  const quizResult = db.exec(`
-    SELECT l.skill, AVG(q.score * 1.0 / q.total * 100) as avg_score
+  const quizResult = await pool.query(`
+    SELECT l.skill, AVG(q.score * 1.0 / q.total * 100)::float as avg_score
     FROM quiz_results q
     JOIN lessons l ON q.lesson_id = l.id
-    WHERE q.user_id = ?
+    WHERE q.user_id = $1
     GROUP BY l.skill
   `, [req.session.userId]);
   const quizScores = {};
-  if (quizResult.length > 0) {
-    for (const row of quizResult[0].values) {
-      quizScores[row[0]] = Math.round(row[1]);
-    }
+  for (const row of quizResult.rows) {
+    quizScores[row.skill] = Math.round(row.avg_score);
   }
 
-  const datesResult = db.exec('SELECT DISTINCT DATE(completed_at) as d FROM progress WHERE completed_at IS NOT NULL AND user_id = ? ORDER BY d DESC', [req.session.userId]);
+  const datesResult = await pool.query('SELECT DISTINCT DATE(completed_at) as d FROM progress WHERE completed_at IS NOT NULL AND user_id = $1 ORDER BY d DESC', [req.session.userId]);
   let streak = 0;
-  if (datesResult.length > 0) {
-    const dates = datesResult[0].values.map(r => r[0]);
+  if (datesResult.rows.length > 0) {
+    const dates = datesResult.rows.map(r => r.d);
     const today = new Date().toISOString().split('T')[0];
     const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
     if (dates[0] === today || dates[0] === yesterday) {
@@ -147,10 +126,8 @@ progressRouter.get('/dashboard', (req, res) => {
     }
   }
 
-  const bmResult = db.exec('SELECT lesson_id, label FROM bookmarks WHERE user_id = ?', [req.session.userId]);
-  const bookmarks = bmResult.length > 0
-    ? bmResult[0].values.map(r => ({ lessonId: r[0], label: r[1] }))
-    : [];
+  const bmResult = await pool.query('SELECT lesson_id, label FROM bookmarks WHERE user_id = $1', [req.session.userId]);
+  const bookmarks = bmResult.rows.map(r => ({ lessonId: r.lesson_id, label: r.label }));
 
   res.json({ totals, completed, quizScores, streak, bookmarks });
 });

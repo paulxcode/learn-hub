@@ -40,7 +40,7 @@ app.get('*', (req, res) => {
 (async () => {
   try {
     await initDb();
-    scanContent();
+    await scanContent();
     app.listen(PORT, () => {
       console.log(`Learn Hub running on http://localhost:${PORT}`);
     });
