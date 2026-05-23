@@ -12,12 +12,20 @@ const CONTENT_DIR = join(__dirname, '..', 'content');
 export const contentRouter = Router();
 
 export async function scanContent() {
-  const skills = readdirSync(CONTENT_DIR).filter(e =>
-    statSync(join(CONTENT_DIR, e)).isDirectory()
-  );
+  const { rowCount } = await pool.query('SELECT 1 FROM lessons LIMIT 1');
+  if (rowCount > 0) return;
 
-  await pool.query('DELETE FROM lessons');
+  let skills;
+  try {
+    skills = readdirSync(CONTENT_DIR).filter(e =>
+      statSync(join(CONTENT_DIR, e)).isDirectory()
+    );
+  } catch {
+    console.error('Content directory not found');
+    return;
+  }
 
+  const rows = [];
   for (const skill of skills) {
     const skillDir = join(CONTENT_DIR, skill);
     const files = readdirSync(skillDir)
@@ -28,12 +36,21 @@ export async function scanContent() {
       const raw = readFileSync(join(skillDir, file), 'utf-8');
       const { data } = matter(raw);
       const id = `${skill}/${file.replace(/^\d+-/, '').replace('.md', '')}`;
-      await pool.query(
-        'INSERT INTO lessons (id, skill, title, order_num) VALUES ($1, $2, $3, $4)',
-        [id, skill, data.title || file, data.order || 0]
-      );
+      rows.push({ id, skill, title: data.title || file, order: data.order || 0 });
     }
   }
+
+  if (rows.length === 0) return;
+
+  const placeholders = rows.map((_, i) =>
+    `($${i * 4 + 1}, $${i * 4 + 2}, $${i * 4 + 3}, $${i * 4 + 4})`
+  ).join(', ');
+  const values = rows.flatMap(r => [r.id, r.skill, r.title, r.order]);
+
+  await pool.query(
+    `INSERT INTO lessons (id, skill, title, order_num) VALUES ${placeholders} ON CONFLICT DO NOTHING`,
+    values
+  );
 }
 
 contentRouter.get('/skills', async (req, res) => {
