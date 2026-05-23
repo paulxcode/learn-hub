@@ -1,0 +1,44 @@
+{
+  "themes": {
+    "cyberpunk": {
+      "name": "Cyberpunk 2077",
+      "skill": "python",
+      "videos": [
+        "https://youtu.be/j0UAoSUzdYc"
+      ],
+      "label": "Cyberpunk 2077 — Samurai"
+    },
+    "dark-souls": {
+      "name": "Dark Souls",
+      "skill": "sql",
+      "videos": [
+        "https://youtu.be/XqL-8APcZgQ"
+      ],
+      "label": "Dark Souls — Main Theme"
+    },
+    "witcher": {
+      "name": "The Witcher 3",
+      "skill": "data-pipelines",
+      "videos": [
+        "https://youtu.be/NknjE2SBPxw"
+      ],
+      "label": "The Witcher 3 — Main Theme"
+    },
+    "league": {
+      "name": "League of Legends",
+      "skill": "data-visualization",
+      "videos": [
+        "https://youtu.be/Nqqc2FHf9Ug"
+      ],
+      "label": "League of Legends — Worlds 2024"
+    },
+    "detroit": {
+      "name": "Detroit: Become Human",
+      "skill": "machine-learning",
+      "videos": [
+        "https://youtu.be/Idwh7c4tKhQ"
+      ],
+      "label": "Detroit: Become Human — Main Theme"
+    }
+  }
+}
