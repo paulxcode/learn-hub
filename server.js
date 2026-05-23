@@ -27,6 +27,19 @@ app.use(session({
   },
 }));
 
+const initPromise = initDb().then(() => scanContent()).catch(err => {
+  console.error('Failed to initialize:', err);
+});
+
+app.use(async (req, res, next) => {
+  try {
+    await initPromise;
+    next();
+  } catch {
+    res.status(500).json({ error: 'Server initialization failed' });
+  }
+});
+
 app.use('/api/auth', authRouter);
 app.use('/api/content', contentRouter);
 app.use('/api/progress', progressRouter);
@@ -37,15 +50,10 @@ app.get('*', (req, res) => {
   res.sendFile(join(__dirname, 'public', 'index.html'));
 });
 
-(async () => {
-  try {
-    await initDb();
-    await scanContent();
-    app.listen(PORT, () => {
-      console.log(`Learn Hub running on http://localhost:${PORT}`);
-    });
-  } catch (err) {
-    console.error('Failed to start:', err);
-    process.exit(1);
-  }
-})();
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Learn Hub running on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
