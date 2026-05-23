@@ -16,7 +16,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(session({
-  store: new (pgSession(session))({ pool }),
+  store: new (pgSession(session))({ pool, createTableIfMissing: true }),
   secret: process.env.SESSION_SECRET || 'learn-hub-dev-secret',
   resave: false,
   saveUninitialized: false,
