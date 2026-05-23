@@ -6,19 +6,19 @@ CREATE TABLE IF NOT EXISTS lessons (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  id SERIAL PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   music_url TEXT DEFAULT '',
   theme TEXT DEFAULT 'cyberpunk',
-  created_at TEXT DEFAULT (datetime('now'))
+  created_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS progress (
   lesson_id TEXT NOT NULL,
   user_id INTEGER NOT NULL DEFAULT 0,
-  completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP DEFAULT NOW(),
   notes TEXT DEFAULT '',
   PRIMARY KEY (lesson_id, user_id)
 );
@@ -36,6 +36,6 @@ CREATE TABLE IF NOT EXISTS quiz_results (
   score INTEGER NOT NULL,
   total INTEGER NOT NULL,
   answers TEXT DEFAULT '',
-  completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  completed_at TIMESTAMP DEFAULT NOW(),
   PRIMARY KEY (lesson_id, user_id)
 );
